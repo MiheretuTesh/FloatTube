@@ -187,6 +187,13 @@ the add-on manager (Firefox). The popup links to the right page.
   Picture-in-Picture. "Auto pop-out on tab switch" is therefore best-effort: it
   works when a gesture is still in scope and is silently skipped otherwise. Use
   the overlay button, popup or shortcut for a guaranteed pop-out.
+* **Floating window position is browser-controlled.** The floating player is
+  the browser's native Picture-in-Picture window — which is what lets it stay
+  on top across apps and monitors. No browser exposes an API to set that
+  window's position, so the extension cannot place it. In practice the browser
+  already does the sensible thing: it opens the window in a screen corner
+  (bottom-right on Chromium), lets you drag it freely, and remembers where you
+  left it for the next pop-out.
 * **Firefox PiP** is not scriptable — see the compatibility table.
 * **DRM players** (Netflix, etc.) work only where the browser permits PiP on
   protected media; this varies by browser and title.

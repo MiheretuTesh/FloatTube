@@ -53,9 +53,15 @@ export class PipController {
     if (el.disablePictureInPicture) {
       throw new PipError('This site disabled Picture-in-Picture for the video.');
     }
-    // The video must have decoded at least one frame before PiP is allowed.
-    if (el.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
-      await waitForMetadata(el);
+    // requestPictureInPicture() throws unless the element has loaded metadata.
+    // Lazy / feed videos commonly sit at readyState 0 until played, so prime
+    // them here — we are still inside the originating click, which permits
+    // play()/load().
+    if (el.readyState < HTMLMediaElement.HAVE_METADATA) {
+      await primeMetadata(el);
+    }
+    if (el.readyState < HTMLMediaElement.HAVE_METADATA) {
+      throw new PipError('This video hasn’t loaded yet — press play on it, then pop out.');
     }
     if (this.isActive) {
       await document.exitPictureInPicture().catch(() => undefined);
@@ -106,19 +112,60 @@ function toReadableError(err: unknown): string {
     if (err.name === 'NotAllowedError') {
       return 'Picture-in-Picture needs a click — use the overlay button or popup.';
     }
+    if (err.name === 'InvalidStateError') {
+      return 'This video isn’t ready yet — press play on it, then pop out.';
+    }
     return err.message || err.name;
   }
   return err instanceof Error ? err.message : 'Could not start Picture-in-Picture.';
 }
 
-/** Resolve once the element has enough data for PiP (or after a short wait). */
-function waitForMetadata(el: HTMLVideoElement): Promise<void> {
+/**
+ * Coax a not-yet-loaded video into producing metadata, then resolve.
+ *
+ * Lazy / feed videos start at readyState 0. We kick off loading — preferring
+ * play() (allowed because we are still inside the originating click) and
+ * falling back to load(). Resolves as soon as metadata arrives, or after a
+ * safety timeout that stays within the browser's transient-activation window
+ * so the subsequent requestPictureInPicture() still counts as user-initiated.
+ */
+function primeMetadata(el: HTMLVideoElement): Promise<void> {
   return new Promise<void>((resolve) => {
-    const done = (): void => {
-      el.removeEventListener('loadeddata', done);
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      el.removeEventListener('loadedmetadata', finish);
+      el.removeEventListener('loadeddata', finish);
+      clearTimeout(timer);
       resolve();
     };
-    el.addEventListener('loadeddata', done, { once: true });
-    setTimeout(done, 1500); // never block the user indefinitely
+
+    el.addEventListener('loadedmetadata', finish, { once: true });
+    el.addEventListener('loadeddata', finish, { once: true });
+
+    try {
+      // `preload="none"` would otherwise refuse to fetch anything.
+      if (el.preload === 'none') el.preload = 'metadata';
+      const played = el.play();
+      if (played && typeof played.catch === 'function') {
+        played.catch(() => {
+          // Autoplay/site policy refused playback — at least force a load.
+          try {
+            el.load();
+          } catch {
+            /* nothing more we can do */
+          }
+        });
+      }
+    } catch {
+      try {
+        el.load();
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const timer = setTimeout(finish, 4000);
   });
 }
